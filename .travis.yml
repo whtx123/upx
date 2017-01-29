@@ -1,0 +1,37 @@
+# Support for Travis CI     -- https://travis-ci.org/upx/upx/builds
+# Support for Coverity Scan -- https://scan.coverity.com/projects/upx-upx
+# Copyright (C) Markus Franz Xaver Johannes Oberhumer
+
+sudo: false
+language: cpp
+compiler: gcc
+
+notifications: { email: { on_success: never, on_failure: change } }
+
+env:
+  global:
+    # COVERITY_SCAN_TOKEN, created via the "travis encrypt" command using the project repo's public key
+    - secure: "XUYBlb37i44EZEpeP+tQrkUqt1Xbr/2pV9b7npjv4+zwmGNEKcvjdgTL1lg2WxrnzOXpxw3XQgVwdgw9ws/mHuLqaOCg01uWxEhnRbt4vaUFWn8Mz6bdjbznzgwWlxOKvSFWIjUmRd+e6HKqt+VJvDnl6R7O201SgZ1AT0HxKt3kieGBvRQujZHLLeiE7yYeRnLX55QwirTlfxCkxUCh2XOFV10iTqqS0ckY7CE3USKTV7bNdARFqDSjYN79yUx8FMweWRsv1EmMka9FHbV9VBoTciqyyW8I5+ldQvIjX64fOM4NJOwrQ4BasosLmCuKehYhNuVRqShU69ijQtQsmbgy+sFHwAhbeGKy3Rp5Cl+9TmjT5Z9rCiGnthsiBYuk8RwMI4TAuH/5dgukYsCJKG+/HYmoOi8BaSuRLP+uB+TN5bR4xDn4xbsecHmhwa5NNwia2JLXjg+1DwqJ1lnuH7qp8Rmby+vh/w6jv1SNJV3qHzwAkJD+GyiA7RZtHUt42MzD5RO/oLBm315eXVc1YlC5evcJv0jq/f3kQFvSf/pmXgEF3hNwEYb7S4uUsIiN8x+QXPmHaiXwY1DBDPzAlKrpwozGp0pD4AcvW4Idw1wKM0hsyv/Is5x3gFC/lXWfeNmcEmpAuSaf7RCXCxqNEZPt76BCCZiRM3GSmF06aVA="
+
+addons:
+  apt: { packages: [ "libucl-dev", "zlib1g-dev" ] }
+  coverity_scan:
+    project:
+      name: "upx/upx"
+      description: "Build submitted via Travis CI"
+    notification_email: markus@oberhumer.com
+    build_command_prepend:
+    build_command: "make -C src BUILD_USE_DEPEND=0"
+    branch_pattern: coverity_scan
+
+before_script:
+  - true
+  # INFO: here starts the coverity_scan build_command from above
+
+script:
+  - ls -la src/upx.out || true
+  - ls -laR cov-int || true
+  - cat cov-int/scm_log.txt || true
+  - true
+
+# vim:set ts=2 sw=2 et:
