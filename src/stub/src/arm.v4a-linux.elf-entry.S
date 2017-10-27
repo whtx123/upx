@@ -71,7 +71,7 @@ __ARM_NR_BASE  = 0xf0000 + __NR_SYSCALL_BASE
 __ARM_NR_cacheflush =  2 + __ARM_NR_BASE
 
 #ifndef DEBUG  /*{*/
-#define DEBUG 0
+#define DEBUG 1
 #endif  /*}*/
 
 #if DEBUG  //{

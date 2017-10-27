@@ -29,20 +29,21 @@
 *  <jreiser@users.sourceforge.net>
 */
 
+NBPW= 4  // Number of Bytes Per Word
 #define ARM_OLDABI 1
 #include "arch/arm/v5a/macros.S"
 
 #define bkpt .long 0xe7f001f0  /* reserved instr; Linux GNU eabi breakpoint */
 #define bkpt_th .short 0xde01  /* reserved instr; Linux GNU eabi breakpoint */
-sz_Elf32_Ehdr = 13*4
-sz_Elf32_Phdr =  8*4
+sz_Elf32_Ehdr = 13*NBPW
+sz_Elf32_Phdr =  8*NBPW
 
-sz_b_info= 12
-  sz_unc= 0
-  sz_cpr= 4
-  b_method= 8
-sz_l_info= 12
-sz_p_info= 12
+sz_b_info= 3*NBPW
+  sz_unc= 0*NBPW
+  sz_cpr= 1*NBPW
+  b_method= 2*NBPW
+sz_l_info= 3*NBPW
+sz_p_info= 3*NBPW
 
 PROT_READ=  1
 PROT_WRITE= 2
@@ -78,7 +79,7 @@ __ARM_NR_cacheflush =  2 + __ARM_NR_BASE
 #define eax r4
 #define ecx r5
 
-#define SP(d) sp,#4*(_-d)  /* stack addressing mode */
+#define SP(d) sp,#NBPW*(_-d)  /* stack addressing mode */
 
 .macro thumb_sys7t N
 #if defined(ARMEL_EABI4)
@@ -101,13 +102,18 @@ __ARM_NR_cacheflush =  2 + __ARM_NR_BASE
         push {\reg}
 _= 1+_  // one more word on stack
 .endm
-
 .macro pop_ reg
         pop {\reg}
 _=-1+_  // one less word on stack
 .endm
+.macro pusha
+        push {r0,r1,r2,r3,r4,r5,r6,r7,lr}
+.endm
+.macro popa
+        pop  {r0,r1,r2,r3,r4,r5,r6,r7,pc}
+.endm
 
-//#define lodsl ldr eax,[esi],#4
+//#define lodsl ldr eax,[esi],#NBPW
 #define lodslu bl get4u
 
   section ELFMAINX
@@ -117,30 +123,34 @@ _=-1+_  // one less word on stack
 //  .long offset(escape_hatch)  // override with round_up(2, PT_LOAD[0]{.p_memsz + .p_vaddr})
 //  .long offset({l_info; p_info; b_info; compressed data})
 
-#define DEBUG 0
+#define DEBUG 1
+D_INFO= . - 4*NBPW
         .code 16  //; .balign 4
 .real_start_ofELFMAINX:
         .thumb_func
 _start: .globl _start
         nop
+        pusha
 #if DEBUG  //{
-        bkpt_th  // for debugging
+   // bkpt_th  // for debugging
+        pusha; mov r0,#0x21; bl trace
 #endif  //}
-        push {r0,r1,r2,r3,r4,r5,r6,r7,lr}
 _=9
 o_uinit= 1  // lr
         adr esi,here
-        sub esi,esi,#4*4 + 2*(4+ DEBUG)  // D_INFO
+        sub esi,esi,#here - D_INFO // D_INFO
+        b here
+        .balign 4
 here:
                mov ecx,esi
-        ldr eax,[esi,#0*4]; sub ecx,eax; //str ecx,[SP(o_reloc)]
+        ldr eax,[esi,#0*NBPW]; sub ecx,eax; //str ecx,[SP(o_reloc)]
 // reloc DT_INIT  for step 12
-        ldr tmp,[esi,#1*4]; add tmp,ecx; str tmp,[SP(o_uinit)]
-        ldr edi,[esi,#3*4]; add edi,ecx  // &l_info; also destination for decompress
+        ldr tmp,[esi,#1*NBPW]; add tmp,ecx; str tmp,[SP(o_uinit)]
+        ldr edi,[esi,#3*NBPW]; add edi,ecx  // &l_info; also destination for decompress
         mov esi,#sz_l_info+sz_p_info
         add esi,edi  // &b_info
 
-        sub sp,#3*4  // 3 slots of space
+        sub sp,#3*NBPW  // 3 slots of space
         _=1+_  // &escape_hatch (step 10)
 o_hatch=_   // 10
         _=2+_  // param space: munmap temp pages (step 9)
@@ -207,6 +217,9 @@ unf_done:
 
         .thumb_func
 L610:
+#if DEBUG //{
+        pusha; mov r0,#0x22; bl trace
+#endif  //}
         push_ lr  // &f_unfilter (thumb mode)
 o_unflt=_  // 17
         ldrb tmp,[esi,#b_method-4+1]; push_ tmp  // ftid
@@ -290,7 +303,7 @@ L710:
 
         mov tmp,lr; sub tmp,#1; push_ tmp  // &f_decompress (ARM mode)
 o_uncpr=_  // 23
-        add tmp,SP(p_unflt)+1*4; push_ tmp  // &dstlen
+        add tmp,SP(p_unflt)+1*NBPW; push_ tmp  // &dstlen
         push_ edi  // dst
         push_ ecx  // srclen
         push_ esi  // src;  arglist ready for decompress  step 6
@@ -310,6 +323,9 @@ SAVE_=_
 supervise:  // moved at runtime before being executed
         // Allocate pages for result of decompressing.
         // These replace the compressed source and the following hole.
+#if DEBUG //{
+        pusha; mov r0,#0x23; bl trace
+#endif  //}
         mov arg5,#0; mvn arg5,arg5  // -1; cater to *BSD for fd of MAP_ANON
         mov arg4,#MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED
         mov arg3,#PROT_READ|PROT_WRITE
@@ -325,11 +341,20 @@ supervise:  // moved at runtime before being executed
         bl movsl
 
         pop {arg1,arg2,arg3,arg4, eax}
+#if DEBUG  //{
+        pusha; mov r0,#0x24; bl trace
+#endif  //}
 _=-5+_  // 22
         blx eax  // decompress
         pop_ tmp  // toss arg5
+#if DEBUG  //{
+        pusha; mov r0,#0x25; bl trace
+#endif  //}
 
 // Place the escape hatch
+#if DEBUG  //{
+        pusha; mov r0,#0x26; bl trace
+#endif  //}
         pop  {arg1,arg2}  // addr, len
         mov tmp,#1
         push {arg1,arg2}
@@ -347,11 +372,14 @@ _=-6+_  // 15
         tst arg4,arg4; beq 0f  // 0==ftid ==> no filter
         blx eax  // f_unfilter
 0:
-        ldr arg1,[sp,#0*4]  // lo(dst)
-        ldr arg2,[sp,#1*4]  // len
+        ldr arg1,[sp,#0*NBPW]  // lo(dst)
+        ldr arg2,[sp,#1*NBPW]  // len
         add arg2,arg1  // hi(dst)
         bl x__ARM_NR_cacheflush
 
+#if DEBUG  //{
+        pusha; mov r0,#0x27; bl trace
+#endif  //}
 //p_mprot  // 15
         pop {arg1,arg2, tmp}; mov lr,tmp
 _=-3+_  // 12
@@ -366,6 +394,9 @@ _=-3+_  // 12
         lsl r7,#16
         add r7,#__NR_munmap - ((__NR_munmap>>16)<<16)
 .endif
+#if DEBUG  //{
+        pusha; mov r0,#0x28; bl trace
+#endif  //}
         pop {arg1,arg2, pc}  // goto hatch
 _=-3+_  // 9
         .balign 4
@@ -383,8 +414,8 @@ movsl_subr:
 // FALL THROUGH to the part of 'movsl' that trims to a multiple of 8 words.
 // 7/8 of the time this is faster; 1/8 of the time it's slower.
 9:
-        ldr tmp,[esi,#0]; add esi,#4
-        str tmp,[edi,#0]; add edi,#4
+        ldr tmp,[esi,#0]; add esi,#NBPW
+        str tmp,[edi,#0]; add edi,#NBPW
         sub ecx,#1
         .thumb_func
 movsl:  // In:  edi= 4-byte aligned dst; esi= 4-byte aligned src; ecx= word count
@@ -426,6 +457,69 @@ x__ARM_NR_cacheflush:
         swi 0
         bx lr
 
+#if DEBUG  //{
+#define ROUND_UP(m,x) (-(m) & (-1+(m) + (x)))
+TRACE_BUFLEN= 2*NBPW + ROUND_UP(NBPW, (1+8+1) + 3*(9*9) + 1)
+// 2*NBPW: safety
+// 1+8+2: first line: '\n', key, '>'
+// 3*(9*9): three lines of {'\n', displ, 8*{' ', word}}
+// 1: '\n'
+
+trace:
+        mov r4,sp  @ &saved_r0
+        push {lr}  @ our ret.addr
+        sub sp,#TRACE_BUFLEN
+        mov r2,sp  @ output string
+
+        mov r1,#'\n'; bl trace_hex  @ In: r0 as label
+        mov r1,#'>';  strb r1,[r2]; add r2,r2,#1
+
+        mov r5,#3  @ rows to print
+5:  @ each row
+        mov r1,#TRACE_BUFLEN-252; add r1,#252; sub r0,r4,r1
+        add r1,sp,#NBPW; sub r0,r0,r1  @ NBPW: our ret.addr
+        lsr r0,r0,#2; mov r1,#'\n'; bl trace_hex  @ which block of 8
+
+        mov r6,#8  @ words per row
+0:  @ each word
+        ldr r0,[r4]; add r4,r4,#NBPW; mov r1,#' '; bl trace_hex  @ next word
+        sub r6,r6,#1; bne 0b
+
+        sub r5,r5,#1; bne 5b
+
+        mov r0,#'\n'; strb r0,[r2]; add r2,r2,#1
+        mov r1,sp  @ buf
+        sub r2,r2,r1  @ count
+        mov r0,#2  @ FD_STDERR
+#if defined(ARMEL_EABI4)  /*{*/
+        mov r7,#__NR_write
+        swi 0
+#else  /*}{*/
+        swi __NR_write
+#endif  /*}*/
+        add sp,#TRACE_BUFLEN
+        pop {r0}  @ our ret.addr
+        ldr r1,[sp,#8*NBPW]  @ saved_lr
+        str r0,[sp,#8*NBPW]  @ our ret.addr
+        mov lr,r1  @ restore lr
+        pop {r0,r1,r2,r3,r4,r5,r6,r7,pc}
+
+trace_hex:  // In: r0=val, r1=punctuation before, r2=ptr; Uses: r3, ip
+        strb r1,[r2]; add r2,r2,#1  @ punctuation
+        mov r3,#8  @ n_digits
+        adr r1,hex; mov ip,r1
+0:
+        mov r1,#-4 + 32; ror r0,r1
+        mov r1,#0xf; and r1,r0
+        add r1,r1,ip; ldrb r1,[r1]
+        strb r1,[r2]; add r2,r2,#1
+        sub r3,r3,#1; bne 0b
+        ret
+        .balign 4
+hex:
+        .ascii "0123456789abcdef"
+#endif  //}
+
         .thumb_func
 L220:
 .real_start_ofL220:
@@ -439,7 +533,7 @@ o_super=_  // 28
         mov arg5,#0; mvn arg5,arg5  // -1; cater to *BSD for fd of MAP_ANON
         mov arg4,#MAP_PRIVATE|MAP_ANONYMOUS
         mov arg3,#PROT_READ|PROT_WRITE|PROT_EXEC
-        str arg2,[SP(p_unmap)+1*4]  // length to unmap
+        str arg2,[SP(p_unmap)+1*NBPW]  // length to unmap
         mov arg1,#0  // any addr
         thumb_sys7t __NR_mmap64; asr tmp,r0,#12; add tmp,#1; bne 0f; bkpt_th; 0:
         str r0,[SP(p_unmap)]  // address to unmap
@@ -449,14 +543,14 @@ o_super=_  // 28
         ldr ecx,[SP(o_wfrag)]  // w_fragment
         bl movsl  // copy the fragment
 
-        ldr esi,[SP(p_uncpr)+0*4]  // src
-        ldr ecx,[SP(p_uncpr)+1*4]  // len
+        ldr esi,[SP(p_uncpr)+0*NBPW]  // src
+        ldr ecx,[SP(p_uncpr)+1*NBPW]  // len
         mov tmp,#3
         and tmp,esi  // length of prefix alignment
         sub esi,tmp  // down to word aligned
         add ecx,tmp  // prefix increases byte length
         add tmp,edi // skip prefix at destination
-        str tmp,[SP(p_uncpr)+0*4]  // dst
+        str tmp,[SP(p_uncpr)+0*NBPW]  // dst
         add ecx,#3  // round up to full words
         lsr ecx,#2
         bl movsl  // copy all aligned words that contain compressed data
@@ -492,7 +586,7 @@ get4u:
 wlen_subr:  // Out: ecx= nwords of inline subr at *tmp
         lsr tmp,tmp,#2
         lsl tmp,tmp,#2  // word align (correct for thumb mode)
-        sub tmp,#4
+        sub tmp,#4  // 2*2  ??
         ldrh ecx,[tmp,#0]; lsl ecx,#32-11; lsr ecx,#32-11-11  // hi(disp)
         ldrh tmp,[tmp,#2]; lsl tmp,#32-11; lsr tmp,#32-11- 0  // lo(disp)
         add ecx,tmp  // disp

@@ -1668,6 +1668,8 @@ bool PackLinuxElf32::canPack()
             }
         }
     }
+    // Note that ELFOSABI_NONE == ELFOSABI_SYSV, which is prefered by 'readelf'.
+    // Also ELFOSABI_LINUX == ELFOSABI_GNU, but that is ignorable.
     if (Elf32_Ehdr::ELFOSABI_NONE ==osabi0
     ||  Elf32_Ehdr::ELFOSABI_LINUX==osabi0) { // No EI_OSBAI, no PT_NOTE.
         unsigned const arm_eabi = 0xff000000u & get_te32(&ehdr->e_flags);

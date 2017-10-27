@@ -54,7 +54,7 @@ PATHMAX=  4096
 PATH_MAX= 4096
 
 #ifndef DEBUG  /*{*/
-#define DEBUG 0
+#define DEBUG 1
 #define TRACE_REGS r0-r12,r14,r15
 #endif  /*}*/
 

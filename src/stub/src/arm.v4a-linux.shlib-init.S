@@ -29,6 +29,18 @@
 *  <jreiser@users.sourceforge.net>
 */
 
+#ifndef DEBUG  /*{*/
+#define DEBUG 1
+#endif  /*}*/
+
+#if DEBUG  //{
+#define TRACE_REGS r0-r12,r14,r15
+// sp (r13) is not included because the write-back might cause UNDEFINED behavior
+// if the write-back register is not first or last.  The actual value of sp
+// usually does not matter.  Just remember that lr (r14) and pc (r15) are stored
+// one word closer to the stack pointer because r13 has been omitted.
+#endif  //
+
 #define ARM_OLDABI 1
 #include "arch/arm/v5a/macros.S"
 
@@ -86,6 +98,9 @@ __ARM_NR_cacheflush =  2 + __ARM_NR_BASE
 
 _start: .globl _start
         nop  //; bkpt  // for debugging
+#if DEBUG  /*{*/
+        stmdb sp!,{TRACE_REGS}; mov r0,#0x21; bl trace
+#endif  /*}*/
         stmdb sp!,{arg1,arg2,arg3, eax,ecx,r6,r7, fp,lr,pc}
         mov fp,sp
 o_uinit= (3+4+2)*4  // pc
@@ -248,6 +263,9 @@ tst_unf:
 #undef t2
 
 L610:
+#if DEBUG  /*{*/
+        stmdb sp!,{TRACE_REGS}; mov r0,#0x22; bl trace
+#endif  /*}*/
         push lr
 o_unflt= -7*4
         ldrb tmp,[esi,#b_method-4+1]; push tmp  // ftid
@@ -275,6 +293,9 @@ p_uncpr= -17*4
 
         bl L220
 supervise:
+#if DEBUG  /*{*/
+        stmdb sp!,{TRACE_REGS}; mov r0,#0x23; bl trace
+#endif  /*}*/
         // Allocate pages for result of decompressing.
         // These replace the compressed source and the following hole.
         mvn arg5,#0  // -1; cater to *BSD for fd of MAP_ANON
@@ -292,8 +313,14 @@ supervise:
         bl movsl
 
         ldmia sp!,{arg1,arg2,arg3,arg4, eax}
+#if DEBUG  /*{*/
+        stmdb sp!,{TRACE_REGS}; mov r0,#0x24; bl trace
+#endif  /*}*/
         blx eax  // decompress
         add sp,sp,#4  // toss arg5
+#if DEBUG  /*{*/
+        stmdb sp!,{TRACE_REGS}; mov r0,#0x25; bl trace
+#endif  /*}*/
 
         bl L620
 //hatch:
@@ -307,6 +334,9 @@ supervise:
         ldmia sp!,{arg1,arg2,arg3, eax,ecx,r6,r7, fp,lr,pc}
 
 L620:  // Implant escape hatch at end of .text
+#if DEBUG  /*{*/
+        stmdb sp!,{TRACE_REGS}; mov r0,#0x26; bl trace
+#endif  /*}*/
         ldr eax,[fp,#o_hatch]
         ldmia  lr,{arg1,arg2}
         stmia eax,{arg1,arg2}
@@ -316,6 +346,9 @@ L620:  // Implant escape hatch at end of .text
         tst arg4,arg4; beq 0f  // 0==ftid ==> no filter
         blx eax  // unfilter
 0:
+#if DEBUG  /*{*/
+        stmdb sp!,{TRACE_REGS}; mov r0,#0x27; bl trace
+#endif  /*}*/
 //p_mprot
         ldr arg1,[sp,#0*4]  // lo(dst)
         ldr arg2,[sp,#1*4]  // len
@@ -339,6 +372,9 @@ L620:  // Implant escape hatch at end of .text
         add r7,r7,#__NR_munmap - ((__NR_munmap>>16)<<16)
 .endif
 #endif  //}
+#if DEBUG  /*{*/
+        stmdb sp!,{TRACE_REGS}; mov r0,#0x28; bl trace
+#endif  /*}*/
         ldmia sp!,{arg1,arg2, pc}  // goto hatch
 
 movsl_subr:
@@ -361,6 +397,57 @@ movsl:  // edi= 4-byte aligned dst; esi= 4-byte aligned src; ecx= word count
 9:
         ret
 
+#if DEBUG  /*{*/
+TRACE_BUFLEN=512
+trace:
+        str lr,[sp,#(-1+ 15)*4]  @ return pc; [remember: sp is not stored]
+        mov r4,sp  @ &saved_r0
+        sub sp,sp,#TRACE_BUFLEN
+        mov r2,sp  @ output string
+
+        mov r1,#'\n'; bl trace_hex  @ In: r0 as label
+        mov r1,#'>';  strb r1,[r2],#1
+
+        mov r5,#3  @ rows to print
+L600:  @ each row
+        sub r0,r4,#TRACE_BUFLEN
+        sub r0,r0,sp
+        mov r0,r0,lsr #2; mov r1,#'\n'; bl trace_hex  @ which block of 8
+
+        mov r6,#8  @ words per row
+0:  @ each word
+        ldr r0,[r4],#4; mov r1,#' '; bl trace_hex  @ next word
+        subs r6,r6,#1; bgt 0b
+
+        subs r5,r5,#1; bgt L600
+
+        mov r0,#'\n'; strb r0,[r2],#1
+        sub r2,r2,sp  @ count
+        mov r1,sp  @ buf
+        mov r0,#2  @ FD_STDERR
+#if defined(ARMEL_EABI4)  /*{*/
+        mov r7,#__NR_write
+        swi 0
+#else  /*}{*/
+        swi __NR_write
+#endif  /*}*/
+        add sp,sp,#TRACE_BUFLEN
+        ldmia sp!,{TRACE_REGS}
+
+trace_hex:  // In: r0=val, r1=punctuation before, r2=ptr; Uses: r3, ip
+        strb r1,[r2],#1  @ punctuation
+        mov r3,#4*(8 -1)  @ shift count
+        adr ip,hex
+0:
+        mov r1,r0,lsr r3
+        and r1,r1,#0xf
+        ldrb r1,[ip, r1]
+        strb r1,[r2],#1
+        subs r3,r3,#4; bge 0b
+        ret
+hex:
+        .ascii "0123456789abcdef"
+#endif  /*}*/
 L220:
         push lr  // &supervise
 o_super= -18*4
