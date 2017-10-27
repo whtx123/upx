@@ -57,6 +57,9 @@ PAGE_SHIFT= 12
 PAGE_MASK=  (~0<<PAGE_SHIFT)
 PAGE_SIZE= -PAGE_MASK
 
+AT_NULL   = 0
+AT_PAGESZ = 6
+
 __NR_exit =      1 + __NR_SYSCALL_BASE
 __NR_write =     4 + __NR_SYSCALL_BASE
 __NR_mmap64 = 0xc0 + __NR_SYSCALL_BASE
@@ -78,6 +81,7 @@ __ARM_NR_cacheflush =  2 + __ARM_NR_BASE
 #define tmp r3
 #define eax r4
 #define ecx r5
+#define rPMASK r6
 
 #define SP(d) sp,#NBPW*(_-d)  /* stack addressing mode */
 
@@ -129,19 +133,34 @@ D_INFO= . - 4*NBPW
 .real_start_ofELFMAINX:
         .thumb_func
 _start: .globl _start
-        nop
-        pusha
+        nop  // convenience for hacking
 #if DEBUG  //{
-   // bkpt_th  // for debugging
+   // bkpt_th  // compiled-in breakpoint for interactive debugging
         pusha; mov r0,#0x21; bl trace
 #endif  //}
+        pusha
 _=9
 o_uinit= 1  // lr
+
         adr esi,here
+        ldr rPMASK,[esi]  // default PAGE_MASK
         sub esi,esi,#here - D_INFO // D_INFO
-        b here
+        b there
         .balign 4
 here:
+        .word PAGE_MASK  // default if no AT_PAGESZ
+there:
+// Find PAGE_MASK from AT_PAGESZ
+0:  // advance argv to auxv
+        ldr tmp,[r2]; add r2,#NBPW
+        cmp tmp,#0; bne 0b
+0:  // find AT_PAGESZ
+        ldr tmp,[r2]; ldr r0,[r2,#NBPW]; add r2,#2*NBPW
+        cmp tmp,#AT_NULL; beq 5f
+        cmp tmp,#AT_PAGESZ; bne 0b
+        neg rPMASK,r0
+5:
+
                mov ecx,esi
         ldr eax,[esi,#0*NBPW]; sub ecx,eax; //str ecx,[SP(o_reloc)]
 // reloc DT_INIT  for step 12
@@ -156,14 +175,14 @@ o_hatch=_   // 10
         _=2+_  // param space: munmap temp pages (step 9)
 p_unmap=_  // 12
 
-        push_ lr
+        push_ lr  // our ret.addr: continuation after user DT_INIT
 o_lr=_  // 13
         ldr eax,[esi,#sz_cpr]; add esi,#sz_b_info
         add esi,eax  // skip unpack helper block
 
         lodslu  // eax=dstlen
-        lsl tmp,edi,#(32-PAGE_SHIFT)
-        lsr tmp,tmp,#(32-PAGE_SHIFT)  // tmp= fragment
+        mov tmp,edi
+        bic tmp,rPMASK  // tmp= fragment  [last use of rPMASK]
         add eax,tmp; push_ eax  // params: mprotect restored pages  step 8
         sub edi,tmp; push_ edi
 p_mprot=_  // 15
@@ -459,10 +478,10 @@ x__ARM_NR_cacheflush:
 
 #if DEBUG  //{
 #define ROUND_UP(m,x) (-(m) & (-1+(m) + (x)))
-TRACE_BUFLEN= 2*NBPW + ROUND_UP(NBPW, (1+8+1) + 3*(9*9) + 1)
+TRACE_BUFLEN= 2*NBPW + ROUND_UP(NBPW, (1+8+1) + 3*((1+ 8) + 8*(1+ 8)) + 1)
 // 2*NBPW: safety
-// 1+8+2: first line: '\n', key, '>'
-// 3*(9*9): three lines of {'\n', displ, 8*{' ', word}}
+// 1+8+1: first line: '\n', key, '>'
+// 3*((1+ 8) + 8*(1+ 8)): three lines of {'\n', displ, 8*{' ', word}}
 // 1: '\n'
 
 trace:
