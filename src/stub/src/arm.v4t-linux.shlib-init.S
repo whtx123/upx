@@ -126,9 +126,11 @@ _=-1+_  // one less word on stack
 //  .long offset(user DT_INIT)
 //  .long offset(escape_hatch)  // override with round_up(2, PT_LOAD[0]{.p_memsz + .p_vaddr})
 //  .long offset({l_info; p_info; b_info; compressed data})
+//  .long offset(*_IRELATIVE) relocations
+//  .long n_irel  // number of *_IRELATIVE reloc
 
 #define DEBUG 1
-D_INFO= . - 4*NBPW
+D_INFO= . - 6*NBPW
         .code 16  //; .balign 4
 .real_start_ofELFMAINX:
         .thumb_func
