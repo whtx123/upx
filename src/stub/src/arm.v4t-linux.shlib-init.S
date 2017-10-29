@@ -59,6 +59,7 @@ PAGE_SIZE= -PAGE_MASK
 
 AT_NULL   = 0
 AT_PAGESZ = 6
+AT_HWCAP  =16
 
 __NR_exit =      1 + __NR_SYSCALL_BASE
 __NR_write =     4 + __NR_SYSCALL_BASE
@@ -135,50 +136,50 @@ D_INFO= . - 6*NBPW
 .real_start_ofELFMAINX:
         .thumb_func
 _start: .globl _start
-        nop  // convenience for hacking
+  //  bkpt_th  // compiled-in breakpoint for interactive debugging
 #if DEBUG  //{
-   // bkpt_th  // compiled-in breakpoint for interactive debugging
         pusha; mov r0,#0x21; bl trace
 #endif  //}
         pusha
 _=9
 o_uinit= 1  // lr
-
         adr esi,here
-        ldr rPMASK,[esi]  // default PAGE_MASK
-        sub esi,esi,#here - D_INFO // D_INFO
-        b there
-        .balign 4
+          mov r7,#0  // default HWCAP
+        sub esi,#here - D_INFO // D_INFO
 here:
-        .word PAGE_MASK  // default if no AT_PAGESZ
-there:
-// Find PAGE_MASK from AT_PAGESZ
+          mvn rPMASK,r7  // ~0
+          lsl rPMASK,#PAGE_SHIFT
+
+        sub sp,#3*NBPW  // 3 slots of space
+        _=1+_  // &escape_hatch (step 10)
+o_hatch=_   // _=10
+        _=2+_  // param space: munmap temp pages (step 9)
+p_unmap=_  // _=12
+
 0:  // advance argv to auxv
         ldr tmp,[r2]; add r2,#NBPW
         cmp tmp,#0; bne 0b
-0:  // find AT_PAGESZ
+0:  // find AT_PAGESZ, AT_HWCAP
         ldr tmp,[r2]; ldr r0,[r2,#NBPW]; add r2,#2*NBPW
-        cmp tmp,#AT_NULL; beq 5f
-        cmp tmp,#AT_PAGESZ; bne 0b
-        neg rPMASK,r0
-5:
+        cmp tmp,#AT_PAGESZ; bne 1f; neg rPMASK,r0; 1:
+        cmp tmp,#AT_HWCAP;  bne 1f; mov r7,r0;     1:
+        cmp tmp,#AT_NULL; bne 0b
+9:
 
-               mov ecx,esi
+                               mov ecx,esi
         ldr eax,[esi,#0*NBPW]; sub ecx,eax; //str ecx,[SP(o_reloc)]
 // reloc DT_INIT  for step 12
         ldr tmp,[esi,#1*NBPW]; add tmp,ecx; str tmp,[SP(o_uinit)]
         ldr edi,[esi,#3*NBPW]; add edi,ecx  // &l_info; also destination for decompress
+        ldr  r2,[esi,#4*NBPW]; add  r2,ecx  // &_IRELATIVE
+        ldr  r3,[esi,#5*NBPW]  // n_irel
+        push {r2,r3,ecx,r7}  // &_IRELATIVE, n_irel, &Elf32_Ehdr, HWCAP
+_=4+_  // _=16
+
         mov esi,#sz_l_info+sz_p_info
         add esi,edi  // &b_info
-
-        sub sp,#3*NBPW  // 3 slots of space
-        _=1+_  // &escape_hatch (step 10)
-o_hatch=_   // 10
-        _=2+_  // param space: munmap temp pages (step 9)
-p_unmap=_  // 12
-
         push_ lr  // our ret.addr: continuation after user DT_INIT
-o_lr=_  // 13
+o_lr=_  // _=17
         ldr eax,[esi,#sz_cpr]; add esi,#sz_b_info
         add esi,eax  // skip unpack helper block
 
@@ -187,11 +188,11 @@ o_lr=_  // 13
         bic tmp,rPMASK  // tmp= fragment  [last use of rPMASK]
         add eax,tmp; push_ eax  // params: mprotect restored pages  step 8
         sub edi,tmp; push_ edi
-p_mprot=_  // 15
+p_mprot=_  // _=19
         sub eax,tmp  // dstlen
         add edi,tmp  // dst
         lsr tmp,tmp,#2; push_ tmp  // w_fragment
-o_wfrag=_  // 16
+o_wfrag=_  // _=20
 
         call4 L610
 f_unfilter:  // (char *ptr, uint len, uint cto, uint fid)
@@ -242,16 +243,16 @@ L610:
         pusha; mov r0,#0x22; bl trace
 #endif  //}
         push_ lr  // &f_unfilter (thumb mode)
-o_unflt=_  // 17
+o_unflt=_  // _=21
         ldrb tmp,[esi,#b_method-4+1]; push_ tmp  // ftid
         ldrb tmp,[esi,#b_method-4+2]; push_ tmp  // cto8
         push_ eax  // dstlen  also for unfilter  step 7
         push_ edi  // dst    param for unfilter  step 7
-p_unflt=_  // 21
+p_unflt=_  // _=25
 
         lodslu; mov ecx,eax  // ecx= srclen
         lodslu; push_ eax  // method,filter,cto,junk
-
+// _=26
         call4 L710
         .arm
 f_decompress:
@@ -323,12 +324,12 @@ L710:
 // 12. goto user DT_INIT
 
         mov tmp,lr; sub tmp,#1; push_ tmp  // &f_decompress (ARM mode)
-o_uncpr=_  // 23
+o_uncpr=_  // _=27
         add tmp,SP(p_unflt)+1*NBPW; push_ tmp  // &dstlen
         push_ edi  // dst
         push_ ecx  // srclen
         push_ esi  // src;  arglist ready for decompress  step 6
-p_uncpr=_  // 27
+p_uncpr=_  // _=31
 
         mov tmp,#3
         and tmp,esi  // length of prefix alignment
@@ -340,7 +341,7 @@ p_uncpr=_  // 27
         ldr tmp,[SP(o_unflt)]; bl wlen_subr; add edx,ecx
 
         call4 L220
-SAVE_=_
+SAVE_=_  // _=31
 supervise:  // moved at runtime before being executed
         // Allocate pages for result of decompressing.
         // These replace the compressed source and the following hole.
@@ -362,12 +363,13 @@ supervise:  // moved at runtime before being executed
         bl movsl
 
         pop {arg1,arg2,arg3,arg4, eax}
+_=-5+_  // _=26
 #if DEBUG  //{
         pusha; mov r0,#0x24; bl trace
 #endif  //}
-_=-5+_  // 22
         blx eax  // decompress
         pop_ tmp  // toss arg5
+// _=25
 #if DEBUG  //{
         pusha; mov r0,#0x25; bl trace
 #endif  //}
@@ -377,8 +379,10 @@ _=-5+_  // 22
         pusha; mov r0,#0x26; bl trace
 #endif  //}
         pop  {arg1,arg2}  // addr, len
+// _=23
         mov tmp,#1
         push {arg1,arg2}
+// _=25
         add edi,arg1,arg2  // ldr edi,[SP(o_hatch)]
         add edi,#1
         bic edi,tmp  // round_up(2, .p_memsz + .p_vaddr)
@@ -387,9 +391,9 @@ _=-5+_  // 22
         add edi,#1  // thumb mode
         str edi,[SP(o_hatch)]
 
-//p_unflt  // 21
+//p_unflt  // _=25
         pop {arg1,arg2,arg3,arg4, eax, r5}  // r5= w_fragment [discard]
-_=-6+_  // 15
+_=-6+_  // _=19
         tst arg4,arg4; beq 0f  // 0==ftid ==> no filter
         blx eax  // f_unfilter
 0:
@@ -401,11 +405,30 @@ _=-6+_  // 15
 #if DEBUG  //{
         pusha; mov r0,#0x27; bl trace
 #endif  //}
-//p_mprot  // 15
+//p_mprot  // 19
         pop {arg1,arg2, tmp}; mov lr,tmp
-_=-3+_  // 12
+_=-3+_  // _=16
         mov arg3,#PROT_READ|PROT_EXEC
         thumb_sys7t __NR_mprotect
+
+#if DEBUG  //{
+        pusha; mov r0,#0x28; bl trace
+#endif  //}
+        pop {r4,r5,r6,r7}  // r4= &_RELATIVE; r5= n_irel; r6= &Elf32_Ehdr; r7= HWCAP
+_=-4+_  // _=12
+        cmp r5,#0; beq 9f  // no *_IRELATIVE
+sz_Rel= 2*NBPW
+r_offset= 0
+do_irel:
+        ldr r1,[r4,#r_offset]
+        ldr r1,[r6,r4]  // orignal &func
+        mov arg1,r7  // HWCAP
+        blx r1  // func(HWCAP)
+        ldr r1,[r4,#r_offset]
+        str r0,[r6,r4]  // updated &func
+        add r4,#sz_Rel
+        sub r5,#1; bne do_irel
+9:
 
 //p_unmap
 .if __NR_munmap <= 0xff
@@ -415,11 +438,8 @@ _=-3+_  // 12
         lsl r7,#16
         add r7,#__NR_munmap - ((__NR_munmap>>16)<<16)
 .endif
-#if DEBUG  //{
-        pusha; mov r0,#0x28; bl trace
-#endif  //}
         pop {arg1,arg2, pc}  // goto hatch
-_=-3+_  // 9
+_=-3+_  // _=9
         .balign 4
 hatch:
         swi 0  // 0xdf00; munmap
@@ -544,9 +564,9 @@ hex:
         .thumb_func
 L220:
 .real_start_ofL220:
-_=SAVE_  // 27
+_=SAVE_  // _=31
         mov tmp,lr; sub tmp,#1; push_ tmp  // &supervise
-o_super=_  // 28
+o_super=_  // _=32
         bl wlen_subr; add edx,ecx  // wlen_supervise
         lsl arg2,edx,#2  // convert to bytes
 
@@ -587,7 +607,8 @@ o_super=_  // 28
         str tmp,[SP(o_unflt)]
         bl movsl_subr  // copy f_unfilter
 
-        pop_ esi   // &supervise
+        pop_ esi   // &supervise  o_super
+// _=31
         add r7,edi,#1  // &copied (thumb mode)
         bl movsl_subr  // copy supervisor
 
