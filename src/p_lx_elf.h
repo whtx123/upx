@@ -62,6 +62,7 @@ protected:
     virtual void defineSymbols(Filter const *);
     virtual void addStubEntrySections(Filter const *);
     virtual void unpack(OutputFile *fo);
+    virtual void adjust_irelative(OutputFile *) = 0;
 
     virtual upx_uint64_t elf_unsigned_dynamic(unsigned) const = 0;
     static unsigned elf_hash(char const *) /*const*/;
@@ -123,6 +124,7 @@ protected:
     virtual off_t pack3(OutputFile *, Filter &);  // append loader
     virtual void pack4(OutputFile *, Filter &);  // append pack header
     virtual void unpack(OutputFile *fo);
+    virtual void adjust_irelative(OutputFile *);
 
     virtual void generateElfHdr(
         OutputFile *,
@@ -247,6 +249,7 @@ protected:
     virtual off_t pack3(OutputFile *, Filter &);  // append loader
     virtual void pack4(OutputFile *, Filter &);  // append pack header
     virtual void unpack(OutputFile *fo);
+    virtual void adjust_irelative(OutputFile *);
 
     virtual void generateElfHdr(
         OutputFile *,

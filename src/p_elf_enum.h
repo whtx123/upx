@@ -208,6 +208,19 @@
     };
 #endif
 
+#ifdef WANT_REL_ENUM
+#undef WANT_REL_ENUM
+    enum { //
+        R_386_IRELATIVE = 42,
+        R_PPC_IRELATIVE = 248,
+        R_PPC64_IRELATIVE = 248,
+        R_AARCH64_IRELATIVE = 1032,
+        R_ARM_IRELATIVE = 160,
+        R_X86_64_IRELATIVE = 37
+    };
+#define ELF32_R_TYPE(val)               ((val) & 0xff)
+#define ELF64_R_TYPE(i)                 ((i) & 0xffffffff)
+#endif
 
 #ifdef WANT_NHDR_ENUM
 #undef WANT_NHDR_ENUM

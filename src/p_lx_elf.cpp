@@ -293,6 +293,48 @@ PackLinuxElf32::PackLinuxElf32help1(InputFile *f)
     }
 }
 
+#define WANT_REL_ENUM 1
+#include "p_elf_enum.h"
+void
+PackLinuxElf64::adjust_irelative(OutputFile *)
+{  // FIXME
+}
+
+// For a shared library, move all the *_IRELATIVE relocations to the end,
+// and reduce DT_RELSZ so that the dynamic linker will skip them.
+// (*_IRELATIVE should be near the end already, because typically
+// their targets also have normal relocations, before calling them
+// because of *_IRELATIVE.)
+// The UPX stub will process *_IRELATIVE after .text is decompressed.
+void
+PackLinuxElf32::adjust_irelative(OutputFile *fo)
+{
+    unsigned const relent = elf_unsigned_dynamic(Elf32_Dyn::DT_RELENT);
+    unsigned const relsz  = elf_unsigned_dynamic(Elf32_Dyn::DT_RELSZ);
+    unsigned const rel    = elf_unsigned_dynamic(Elf32_Dyn::DT_REL);
+    int j = relsz / relent;
+    Elf32_Rel *rp = j+ (Elf32_Rel *)&file_image[rel], *qp= rp;
+    for (; --rp, --j>=0; ) {
+        if (R_ARM_IRELATIVE==ELF32_R_TYPE(rp->r_info)) {
+            ++n_irel;
+            if (rp!= --qp) {
+                Elf32_Rel tmp = *qp;
+                *qp = *rp;
+                *rp = tmp;
+            }
+        }
+    }
+    irel_off = (char *)qp - (char *)(void *)file_image;
+    if (n_irel) {
+        // &DT_RELSZ is in PT_DYNAMIC which gets moved,
+        // so it is updated later by PackLinuxElf32::pack3 .
+        // Re-write the Elf32_Rel now.
+        fo->seek(rel, SEEK_SET);
+        fo->rewrite(&file_image[rel], relsz);
+        fo->seek(0, SEEK_END);
+    }
+}
+
 off_t PackLinuxElf::pack3(OutputFile *fo, Filter &ft) // return length of output
 {
     unsigned disp;
@@ -327,6 +369,8 @@ off_t PackLinuxElf::pack3(OutputFile *fo, Filter &ft) // return length of output
         len += sizeof(disp);
 
         if (Elf32_Ehdr::EM_ARM==e_machine) { // training
+            adjust_irelative(fo);
+
             set_te32(&disp, irel_off);
             fo->write(&disp, sizeof(disp));
             len += sizeof(disp);
@@ -380,6 +424,7 @@ off_t PackLinuxElf32::pack3(OutputFile *fo, Filter &ft)
         Elf32_Phdr *phdr = phdri;
         unsigned off = fo->st_size();
         unsigned off_init = 0;  // where in file
+        unsigned off_relsz = 0;
         unsigned va_init = sz_pack2;   // virtual address
         so_slide = 0;
         for (int j = e_phnum; --j>=0; ++phdr) {
@@ -419,6 +464,7 @@ off_t PackLinuxElf32::pack3(OutputFile *fo, Filter &ft)
             // Compute new offset of &DT_INIT.d_val.
             if (/*0==jni_onload_sym &&*/ phdr->PT_DYNAMIC==type) {
                 off_init = ioff + ((xct_off < ioff) ? so_slide : 0);
+                off_relsz= ioff + ((xct_off < ioff) ? so_slide : 0);
                 fi->seek(ioff, SEEK_SET);
                 fi->read(ibuf, len);
                 Elf32_Dyn *dyn = (Elf32_Dyn *)(void *)ibuf;
@@ -427,7 +473,11 @@ off_t PackLinuxElf32::pack3(OutputFile *fo, Filter &ft)
                         unsigned const t = (unsigned char *)&dyn->d_val -
                                            (unsigned char *)ibuf;
                         off_init += t;
-                        break;
+                    }
+                    if (dyn->DT_RELSZ==get_te32(&dyn->d_tag)) {
+                        unsigned const t = (unsigned char *)&dyn->d_val -
+                                           (unsigned char *)ibuf;
+                        off_relsz += t;
                     }
                 }
                 // fall through to relocate .p_offset
@@ -435,11 +485,18 @@ off_t PackLinuxElf32::pack3(OutputFile *fo, Filter &ft)
             if (xct_off < ioff)
                 set_te32(&phdr->p_offset, so_slide + ioff);
         }  // end each Phdr
-        if (off_init) {  // change DT_INIT.d_val
-            fo->seek(off_init, SEEK_SET);
+        if (off_init) {  // change DT_INIT.d_val and DT_RELSZ.d_val
+            unsigned word;
             va_init |= (Elf32_Ehdr::EM_ARM==e_machine);  // THUMB mode
-            unsigned word; set_te32(&word, va_init);
+
+            fo->seek(off_init, SEEK_SET);
+            set_te32(&word, va_init);
             fo->rewrite(&word, sizeof(word));
+
+            fo->seek(off_relsz, SEEK_SET);
+            set_te32(&word, elf_unsigned_dynamic(Elf32_Dyn::DT_RELSZ) - n_irel * sizeof(Elf32_Dyn));
+            fo->rewrite(&word, sizeof(word));
+
             flen = fo->seek(0, SEEK_END);
         }
         ehdri.e_shnum = 0;
