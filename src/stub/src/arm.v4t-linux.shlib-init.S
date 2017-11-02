@@ -136,7 +136,7 @@ D_INFO= . - 6*NBPW
 .real_start_ofELFMAINX:
         .thumb_func
 _start: .globl _start
-    nop; bkpt_th  // compiled-in breakpoint for interactive debugging
+   //  nop; bkpt_th  // compiled-in breakpoint for interactive debugging
 #if DEBUG  //{
         pusha; mov r0,#0x21; bl trace
 #endif  //}
